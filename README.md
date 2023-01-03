@@ -1,2 +1,2 @@
-# cordia-rt
+# cordial-rt
 COllaborative DIcom Analysis for RadioTherapy
