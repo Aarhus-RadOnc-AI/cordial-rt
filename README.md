@@ -1,2 +1,2 @@
 # cordial-rt
-COllaborative DIcom Analysis for RadioTherapy
+COllaborative DIcom AnaLysis for RadioTherapy
