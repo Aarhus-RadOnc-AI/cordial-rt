@@ -1,0 +1,2 @@
+user=LASREF
+dicom_file_parent_folder=D:/Anon_dicom_files
