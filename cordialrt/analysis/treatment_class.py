@@ -70,10 +70,24 @@ class Treatment():
         self.structure_path = self.structure_paths[0]
         return(True)
 
+    def init_check_cts(self):
+        """ Raises exepsion if init check fail."""
+        # Only one structure is allowed in each treatment
+        if len(self.ct_paths) == 0:
+            raise rtex.InitError(f"Error, no cts for patient {self.patient_id} , treatment {self.treatment_id}")
+        else:
+            return(True)
+
     def init_check(self): 
         """Returns True if treatment is initated correctly. Also sets the dose, struct to be used"""      
         try:
             self.init_check_structure()    
+        except rtex.InitError as e:
+            print('Raise')
+            raise rtex.InitError(e)
+
+        try:
+            self.init_check_cts()    
         except rtex.InitError as e:
             print('Raise')
             raise rtex.InitError(e)
@@ -175,8 +189,12 @@ class Treatment():
 
     def get_ct_image_data(self):
         """Return information about the CT from the first image"""
+        
         if self.image_data is None:
-            self.image_data = dicomparser.DicomParser(self.ct_paths[0]).GetImageData()
+            try:
+                self.image_data = dicomparser.DicomParser(self.ct_paths[0]).GetImageData()
+            except IndexError:
+                raise rtex.NoCtsError(f'{self.patient_id} has no cts. get_ct_image_data failed')
         return(self.image_data)
 
     def get_max_dose(self):
@@ -188,9 +206,12 @@ class Treatment():
     def right_left_dose_grid_ratio(self):
         """ Finds the ration bewteen the right and left side of the CT-scan. Ratio = right integral dose / left integral dose"""
         rt_dose = self.get_dose()
-        ct_mid_position_patient_coordinates = (self.get_ct_image_data()['position'][0] + 
-        (self.get_ct_image_data()['columns']*self.get_ct_image_data()['pixelspacing'][0]/2))
-        
+        try:
+            ct_mid_position_patient_coordinates = (self.get_ct_image_data()['position'][0] + 
+            (self.get_ct_image_data()['columns']*self.get_ct_image_data()['pixelspacing'][0]/2))
+        except rtex.NoCtsError as e:
+            raise e
+            
         dose_grid_ct_mid_position_patient_coordinates = ct_mid_position_patient_coordinates - rt_dose.ds.ImagePositionPatient[0]
         
         dose_grid_mid_pixel = int(abs(round(dose_grid_ct_mid_position_patient_coordinates / rt_dose.ds.PixelSpacing[0],0)))
@@ -232,7 +253,12 @@ class Treatment():
         The threshold values have been chosen from observation."""
         
         if self.latterality is None:
-            ratio = self.right_left_dose_grid_ratio()
+            try:
+                ratio = self.right_left_dose_grid_ratio()
+            except rtex.NoCtsError as e:
+                left_right_dose_ratio = None
+                raise e
+
             self.left_right_dose_ratio  = ratio
             
             if ratio < 0.8:
