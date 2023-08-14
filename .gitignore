@@ -1,0 +1,16 @@
+git_ignore_folder/
+test/
+
+analysis/cac_segment_to_struct.py
+analysis/screen_cac.py
+analysis/convert_cpr.py
+
+database1.db
+user_config.txt
+test_script.ipynb
+rt_nation_db.db
+run_dvh.py
+run_slice.py
+sample_test.xlsx
+latest_test.xlsx
+*.pyc
