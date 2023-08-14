@@ -15,7 +15,8 @@ def create_sum_dose_file(dose_paths, patient_id, treatment_id, plans, main_refer
     main_dose_scale_factor, boost_reference_dose, boost_dose_scale_factor, write_line_in_db = True, ):
     """ Sum dose files, save the resulting DICOM file and return the path (None if errors)
      This is written with Danish breast cancer patients in mind. If used to sum primary/boost
-     plans with another fractionation scheme, the logic for identifying which plan is the primary, will have to be modified"""
+     plans with another fractionation scheme, the logic for identifying which plan is the primary, 
+     will have to be modified"""
 
     dose_path_scale_pairs = list()
 
@@ -141,10 +142,7 @@ def create_sum_dose_file(dose_paths, patient_id, treatment_id, plans, main_refer
 
 def sum_doses(dose_path_scale_pairs, patient_id):
     """ Return DICOM file with the summed dose (None if errors) and log list. Ignores dose files with max_dose < 1 Gy """
-    
-
     log = list()
-
     log.append(f'Log creacted {datetime.datetime.now()}')
     log.append('Summed doses:')
     log.append(dose_path_scale_pairs)

@@ -1,7 +1,13 @@
 import pandas as pd
 import cordialrt.database.database as rtdb
 from Levenshtein import ratio
-import dicompylercore
+from dicompylercore import dicomparser
+import cordialrt.helpers.user_config
+
+user_config = cordialrt.helpers.user_config.read_user_config()
+USER_NAME = user_config['user']
+DICOM_FOLDER_PATH = user_config['dicom_file_parent_folder']
+
 
 def structure_count(total_roi_list):
     """Counts the number of times the same structure name are found in the new dataset"""
@@ -77,27 +83,31 @@ def get_structure_names_from_id(patient_ids, collection_id):
         
         for file in files: 
             if file[2] == 'structure':
-                structure = dicompylercore.dicomparser.DicomParser(DICOM_FOLDER_PATH + file[3]) 
+                structure = dicomparser.DicomParser(DICOM_FOLDER_PATH + file[3]) 
                 struct_info = structure.GetStructures()
 
                 for key, value in struct_info.items():
                     d = {'name': value['name'],
                         'center': file[3].split('/')[1],
-                        'patient_id':file[3].split('/')[2] } 
+                        'patient_id':file[3].split('/')[2],
+                        'empty':value['empty'] } 
                     data.append(d)
 
+
     df_structs = pd.DataFrame(data)
-                            
-    sql_string ='SELECT synonym FROM skagen_synonyms WHERE priority_count > 0'
-    synonyms = cursor.execute(sql_string).fetchall()
 
-    synonym_strings = list()
-    for s in synonyms:
-        synonym_strings.append(s[0])
+    # with rtdb.DatabaseCall() as db:                
+    #     sql_string ='SELECT synonym FROM skagen_synonyms WHERE priority_count > 0'
+    #     synonyms = db.execute(sql_string).fetchall()
+    # # synonyms = cursor.execute(sql_string).fetchall()
 
-    df_synonyms_counts = pd.DataFrame(df_structs.name.value_counts())
-    df_synonyms_counts['in_synonym_table'] = False
+    # synonym_strings = list()
+    # for s in synonyms:
+    #     synonym_strings.append(s[0])
 
-    df_synonyms_counts.loc[df_synonyms_counts.index.str.lower().isin(synonym_strings), 'in_synonym_table'] = True
+    # df_synonyms_counts = pd.DataFrame(df_structs.name.value_counts())
+    # df_synonyms_counts['in_synonym_table'] = False
 
-    return(df_synonyms_counts)
+    # df_synonyms_counts.loc[df_synonyms_counts.index.str.lower().isin(synonym_strings), 'in_synonym_table'] = True
+
+    return(df_structs)
