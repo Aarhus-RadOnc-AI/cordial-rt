@@ -4,6 +4,9 @@ import pandas as pd
 import os
 import gc
 import datetime
+import cordialrt.database.database as rtdb
+import shutil
+
 
 def dvh_all_patients(
     collection_id,
@@ -102,21 +105,21 @@ def dvh_all_patients(
     failed_patient_ids = list()
 
     try:
-        with open(log_failed_path, mode='r') as infile:
-            reader = csv.reader(infile, delimiter=';' )   
-            next(reader)
-            for rows in reader:
-                failed_patient_ids.append(rows[0])
-        print('Failed patients ids',len(failed_patient_ids))
-    except FileNotFoundError:
-        pass
+        file1 = open(log_failed_path, 'r')
+        lines = file1.readlines()
 
-    # If no file has been found all patients will be processed. 
+        for line in lines:
+            if 'collection_id' not in line:
+                split_line = line.split(';')
+                failed_patient_ids.append(split_line[0])
+    except FileNotFoundError:
+        pass  
+
     if not first_found:
         patients_already_processed = failed_patient_ids
     else:    
-        patients_already_processed = df_excel.index.unique()
-        patients_already_processed.append(failed_patient_ids)
+        patients_already_processed = df_excel.index.unique().to_list()
+        patients_already_processed = patients_already_processed+failed_patient_ids
         del(df_excel)
         del(df_excel_center)
         gc.collect()
@@ -125,6 +128,17 @@ def dvh_all_patients(
 
     if re_run_patients:
         print('Number of re run patients', len(re_run_patients)) 
+
+        #Delete sum_dose files to run them again 
+        with rtdb.DatabaseCall() as db:
+            db.delete_sum_dose_files(re_run_patients, collection_id)
+
+        for patient_id in re_run_patients: 
+            folder = f'{rtdb.DICOM_FOLDER_PATH}/{center}_dicom_dose_sum/{patient_id}/'
+            try:
+                shutil.rmtree(folder)
+            except FileNotFoundError:
+                pass
     else:
         pass
 

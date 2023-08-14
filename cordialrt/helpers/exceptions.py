@@ -11,3 +11,7 @@ class InitError(Error):
 class SumDoseError(Error):
     """Raised when sum dose fails"""
     pass
+
+class NoCtsError(Error):
+    """Raised when treatment has no cts """
+    pass

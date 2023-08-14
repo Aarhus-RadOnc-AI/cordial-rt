@@ -11,7 +11,9 @@ import glob
 user_config = cordialrt.helpers.user_config.read_user_config()
 USER_NAME = user_config['user']
 DICOM_FOLDER_PATH = user_config['dicom_file_parent_folder']
-DATABASE_PATH = f'{definitions.ROOT_DIR}/cordialrt/database.db'
+DATABASE_NAME = user_config['database_name']
+DATABASE_PATH = f'{definitions.ROOT_DIR}/cordialrt/{DATABASE_NAME}'
+
 
 class DatabaseCall():
     def __init__(self):
@@ -107,9 +109,7 @@ class DatabaseCall():
             string_ids = ', '.join(f'"{id}"' for id in select_patients)
             sql_string = f'{sql_string} AND patient_id IN ({string_ids})'
         
-        with closing(self.connection) as self.connection:
-            with closing(self.cursor) as self.cursor:
-                patient_ids = self.cursor.execute(sql_string, variables).fetchall()
+        patient_ids = self.cursor.execute(sql_string, variables).fetchall()
         
         patient_id_lst = []
         for id in patient_ids:
