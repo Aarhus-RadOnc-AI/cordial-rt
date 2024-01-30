@@ -44,6 +44,7 @@ class Treatment():
         self.plans = list()
         self.dose = None
         self.cts = list()
+        self.first_ct = None
 
         #Other properties
         self.treatment_place = None
@@ -97,7 +98,7 @@ class Treatment():
             plan_names =self.get_plan_names()
             raise rtex.InitError(f'Failed for patinet: {self.patient_id} More plans than dose files. Plans: {plan_names}')
 
-        # One dose. We want at most one sum_dose for each treatment. If there is 0, we use the single dose from dose_paths
+        # We want at most one sum_dose for each treatment. If there is 0, we use the single dose from dose_paths
         if len(self.sum_dose_paths) == 0:
             if len(self.dose_paths) == 1 and self.main_dose_scale_factor == 1:
                     # No sum or scale needed.
@@ -241,7 +242,7 @@ class Treatment():
                 l_grid = grid[:,dose_grid_mid_pixel:]
                 
                 try:
-                    left_integral_dose = left_integral_dose + + np.percentile(l_grid,95)
+                    left_integral_dose = left_integral_dose + np.percentile(l_grid,95)
                 except IndexError:
                     continue
 
@@ -249,7 +250,7 @@ class Treatment():
             return(ratio)
 
     def get_latterality(self):
-        """ Translates the left / right dose grid ratios to laterality. 
+        """ Translates the right / left dose grid ratios to laterality. 
         The threshold values have been chosen from observation."""
         
         if self.latterality is None:
@@ -302,6 +303,10 @@ class Treatment():
         self.cts = list()
         for path in self.ct_paths:
             self.cts.append(dicomparser.DicomParser(path))
+
+    def load_first_ct_data(self):
+        """Load the first CT-DICOM file"""
+        self.first_ct = dicomparser.DicomParser(self.ct_paths[0])
                     
     def load_all_dicom_data(self):
         """ Load all dicom file data into the treatment"""
@@ -355,7 +360,7 @@ class Treatment():
             new_roi = Roi(roi_standard_name, self)
             self.rois.append(new_roi)
         else:
-            print('Roi already exists in treatment')
+            raise rtex.RoiAlreadyExists
     
     def extract_roi_names_from_new_data(self):
         """ This function extracts all roi names in a treatment and places it in the list: roi_list """
@@ -437,7 +442,9 @@ class Roi():
 
     def find_synonyms(self):
         """ Get all synonyms linked to the ROI standard name """
+        self.synonyms_found = list()
         synonyms_standard= list()
+       
         with rtdb.DatabaseCall() as db:
             row_data = db.get_synonyms_from_standard_name(self.standard_name, self.treatment.treatment_collection_id, priority = True)
 
@@ -482,12 +489,14 @@ class Roi():
         for key, structure in structures_in_file.items():
             if structure['name'] == self.standard_name:
                 structure_id = key
-                
-        dvh_roi= self.calculate_dvh(structure_id)
-        return(dvh_roi)
+                dvh_roi= self.calculate_dvh(structure_id)
+                return(dvh_roi)
+          
+        return(None)
 
     def get_priority_synonym(self):
         """Get the synonym with the highest priority (laterality, count)"""
+
         if self.priority_synonym is None:
             synonyms = self.find_synonyms()
             priority_structure = None
@@ -528,6 +537,50 @@ class Roi():
         if self.dvh_priority is None:
             self.dvh_priority = self.calculate_dvh_for_priority_synonym()
         return(self.dvh_priority)
+    
+    def get_value_for_dvh_data_point(self, dvh_data_point, prioritize_roi_name=False):
+
+        if self.dvh_priority is None:
+            if prioritize_roi_name: # Try roi name first
+                self.dvh_priority = self.calculate_dvh_for_roi_name()
+
+            if self.dvh_priority is None: # if not found try synonyms
+                try:
+                    self.get_dvh_priority_synonym()
+                except ValueError:
+                    print('Roi dvh error')
+                    self.dvh_priority = None
+        else:
+            try: # try synonyms first
+                self.get_dvh_priority_synonym()
+            except ValueError:
+                print('Roi dvh error')
+                self.dvh_priority = None 
+            
+            if self.dvh_priority is None: # if not found try roi_name
+                self.dvh_priority = self.calculate_dvh_for_roi_name()
+        
+        dvh_point = dvh_data_point.dvh_point
+        output_type = dvh_data_point.output_type
+
+        if dvh_point in ['volume', 'mean','max','min']:
+            try: 
+                dvh_data_point.value = getattr(self.dvh_priority, dvh_point)
+            except:
+                dvh_data_point.value = None
+        else:
+            if output_type == 'rel':
+                try: 
+                    dvh_data_point.value = getattr(self.dvh_priority.relative_volume, dvh_point).value
+                except:
+                   dvh_data_point.value = None
+            else:
+                try: 
+                    dvh_data_point.value = getattr(self.dvh_priority, dvh_point).value
+                except:
+                   dvh_data_point.value = None
+
+        return(dvh_data_point)
 
     def dvh_points_from_roi(self, data_dict, dvh_points): 
         """Get multiple dvh points from a ROI, using the synonym with the highest priority. 
@@ -554,17 +607,13 @@ class Roi():
             else:
                 if rel_abs == 'rel':
                     try: 
-                        data_dict[f'{roi_name}_{dvh_point}_value'] = getattr(self.dvh_priority.relative_volume, dvh_point).value
-                        data_dict[f'{roi_name}_{dvh_point}'] = getattr(self.dvh_priority.relative_volume, dvh_point)
+                        data_dict[f'{roi_name}_{dvh_point}'] = getattr(self.dvh_priority.relative_volume, dvh_point).value
                     except:
-                        data_dict[f'{roi_name}_{dvh_point}_value'] = None
                         data_dict[f'{roi_name}_{dvh_point}'] = None
                 else:
                     try: 
-                        data_dict[f'{roi_name}_{dvh_point}_value'] = getattr(self.dvh_priority, dvh_point).value
-                        data_dict[f'{roi_name}_{dvh_point}'] = getattr(self.dvh_priority, dvh_point)
+                        data_dict[f'{roi_name}_{dvh_point}'] = getattr(self.dvh_priority, dvh_point).value
                     except:
-                        data_dict[f'{roi_name}_{dvh_point}_value'] = None
                         data_dict[f'{roi_name}_{dvh_point}'] = None
 
         return(data_dict)  

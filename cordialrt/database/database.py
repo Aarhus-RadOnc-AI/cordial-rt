@@ -4,9 +4,12 @@ All functions interacting with the database.
 import definitions
 import sqlite3
 import datetime
-from contextlib import closing
-import cordialrt.helpers.user_config
 import glob
+import numpy as np
+import pandas as pd
+from dicompylercore import dicomparser
+import cordialrt.helpers.user_config
+import cordialrt.helpers.exceptions as crtex
 
 user_config = cordialrt.helpers.user_config.read_user_config()
 USER_NAME = user_config['user']
@@ -43,15 +46,19 @@ class DatabaseCall():
 # General dataabse functionality
     def insert_row_in_table(self, table_name, column_names, row_data):
         """ Insert rows into the database and set edit_date and edit_user"""
-        column_names_string = ",".join(column_names)
-        row_data = row_data + [datetime.datetime.now(), USER_NAME]
-        values_place_holder = ','.join(['?']*(len(row_data)))
+        try:
+            column_names_string = ",".join(column_names)
+            row_data = row_data + [datetime.datetime.now(), USER_NAME]
+            values_place_holder = ','.join(['?']*(len(row_data)))
 
-        sql_string = f"""INSERT INTO {table_name}
-                        ({column_names_string}, edit_date, edit_user)
-                        VALUES ({values_place_holder})"""
-        self.cursor.execute(sql_string, row_data)
-        self.connection.commit()    
+            sql_string = f"""INSERT INTO {table_name}
+                            ({column_names_string}, edit_date, edit_user)
+                            VALUES ({values_place_holder})"""
+            self.cursor.execute(sql_string, row_data)
+            self.connection.commit()
+
+        except (sqlite3.IntegrityError, sqlite3.InterfaceError) as e:
+            raise crtex.SqlInsertFail(e)   
 
 # Treatment collection
     def create_treatment_collection(self, collection_name):
@@ -88,27 +95,23 @@ class DatabaseCall():
         
     def get_patient_id_from_collection(self, 
                                         collection_id,
-                                        department = None, 
+                                        centres = None, 
                                         exclude_patients = None, 
-                                        select_patients = None):
+                                        ):
 
         """Get patient ids from all or subgroup of collection """
 
         sql_string = 'SELECT patient_id FROM treatments WHERE collection_id = ?'
         variables = [collection_id]
 
-        if department is not None:
-            sql_string = f'{sql_string} AND treatment_place = ?' 
-            variables.append(department)
+        if centres is not None:
+            string_centres = ', '.join(f'"{centre}"' for centre in centres)
+            sql_string = f'{sql_string} AND treatment_place in ({string_centres})' 
 
         if exclude_patients is not None:
             string_ids = ', '.join(f'"{id}"' for id in exclude_patients)
             sql_string = f'{sql_string} AND patient_id NOT IN ({string_ids})'
-
-        if select_patients is not None:
-            string_ids = ', '.join(f'"{id}"' for id in select_patients)
-            sql_string = f'{sql_string} AND patient_id IN ({string_ids})'
-        
+  
         patient_ids = self.cursor.execute(sql_string, variables).fetchall()
         
         patient_id_lst = []
@@ -164,6 +167,7 @@ class DatabaseCall():
         status, error_log = self.add_files_to_treatment_from_plan_names(patient, treatment_id, plan_names, study_uid)
         return(status, error_log)
     
+# Files     
     def get_file_paths_from_treatment(self, treatment_id):
         """Returns DICOM file information for a treatment"""
         sql_string ='SELECT * FROM dicom_files WHERE treatment_id = ?'
@@ -171,7 +175,6 @@ class DatabaseCall():
 
         return(file_rows)
 
-# Files 
     def add_files_to_treatment(self, treatment_id, files, file_type):
         for uid, file in files.items():
             global_path = file['path'][len(DICOM_FOLDER_PATH):]
@@ -344,6 +347,11 @@ class DatabaseCall():
                     rows.append(synonym)
 
         return(list(set(rows)))
+    
+    def get_all_synonym_data_from_synonym_collection(self,synonym_collection_id):
+        sql_string ='SELECT * FROM synonyms WHERE synonym_collection_id = ?'
+        synonyms = self.cursor.execute(sql_string, [synonym_collection_id]).fetchall()
+        return(synonyms)
 
     def update_db_with_priority_count(self, rois_counted, roi_names, synonym_collection_id):
         """Updates the database with a priority_count"""
@@ -395,10 +403,14 @@ class DatabaseCall():
             for patient_folder in patient_folders:
                 file_paths = glob.glob(f'{patient_folder}/*.dcm')
                 for file_path in file_paths:
-                    file_path = file_path.replace('\\\\', '/')
-                    file_path = file_path.replace('\\', '/')
-                    file_path = file_path[len(DICOM_FOLDER_PATH):]
-                    patient_id = file_path.split('/')[-2]
+                    dataset = dicomparser.DicomParser(file_path)
+                    if dataset.ds.Modality == 'RTSTRUCT':
+                        file_path = file_path.replace('\\\\', '/')
+                        file_path = file_path.replace('\\', '/')
+                        file_path = file_path[len(DICOM_FOLDER_PATH):]
+                        patient_id = file_path.split('/')[-2]
+                    else:
+                        continue
 
                     #insert dicom filed in DB
                     self.insert_row_in_table('dicom_files',
@@ -449,19 +461,85 @@ class DatabaseCall():
         else:
             sql_string = sql_string + 'AND structure_collection_id == ?'
             variables.append(structure_collection_id)
-            dicom_file_rows = self.cursor.execute(sql_string, variables).fetchall()
+            
+        dicom_file_rows = self.cursor.execute(sql_string, variables).fetchall()
 
-            for dicom_file_row in dicom_file_rows:
-                dicom_file_id = dicom_file_row[0]
-                sql_string = f'SELECT file_path FROM dicom_files WHERE dicom_file_id = {dicom_file_id}'
-                dicom_file_path = self.cursor.execute(sql_string).fetchall()
-        
-                structure_path_collection_name.append([dicom_file_path[0], dicom_file_row[1]])
+        for dicom_file_row in dicom_file_rows:
+            dicom_file_id = dicom_file_row[0]
+            sql_string = f'SELECT file_path FROM dicom_files WHERE dicom_file_id = {dicom_file_id}'
+            dicom_file_path = self.cursor.execute(sql_string).fetchone()
+    
+            structure_path_collection_name = structure_path_collection_name + [dicom_file_path[0], dicom_file_row[1]]
 
         return(structure_path_collection_name)
-
     
+    # Data extraction
+    def create_dataset(self, dataset_name, treatment_collection_id):
+        self.insert_row_in_table('datasets', 
+            ['dataset_name', 'treatment_collection_id' ], [dataset_name,treatment_collection_id])
+        sql_string = "SELECT MAX(dataset_id) FROM datasets"
+        dataset_id = self.cursor.execute(sql_string).fetchone()[0]
+        return(dataset_id)
 
+    def new_data_extraction(self, dataset_id):
+        self.insert_row_in_table('data_extractions', 
+            ['dataset_id' ], [dataset_id])
+        sql_string = "SELECT MAX(data_extraction_id) FROM data_extractions"
+        data_extraction_id = self.cursor.execute(sql_string).fetchone()[0]
+        return(data_extraction_id)
+    
+    def insert_data_point(self, data_extraction_id, patient_id, data_point_name, data_point_value_num,
+                          data_point_value_string, data_point_type, roi_standard_name): 
+        self.insert_row_in_table('data_points', 
+                                ['data_extraction_id', 'patient_id', 'data_point_name', 'data_point_value_num',
+                                'data_point_value_string', 'data_point_type', 'roi_standard_name' ], 
+                                [data_extraction_id, patient_id, data_point_name, data_point_value_num,
+                                data_point_value_string, data_point_type, roi_standard_name])
+        
+        # delete datapoints that are the same but from erlier extractions (mabye keep the latest 2)
+
+    def get_dataset_treatment_collection_id(self, dataset_id):
+        sql_string =f'SELECT treatment_collection_id FROM datasets WHERE dataset_id={dataset_id}'
+        return(self.cursor.execute(sql_string).fetchone())
+    
+    def get_dataset_as_dataframe(self, dataset_id, select_data_points = False, select_patient_ids = False):
+        """ Returns a pandas data frame containing all data_points that have been extracted. Specific 
+        data point or patient_ids can be provided as lists to limit the output"""
+
+        data_points = list()
+        sql_string_add = ''
+        
+        if select_data_points != False:
+            string_data_points = ', '.join(f'"{select_data_point}"' for select_data_point in select_data_points)    
+            sql_string_add = f'{sql_string_add} AND data_point_name IN ({string_data_points})'
+
+        if select_patient_ids != False:
+            string_patient_ids = ', '.join(f'"{select_patient_id}"' for select_patient_id in select_patient_ids)
+            sql_string = f'{sql_string_add} AND patient_id IN ({string_patient_ids})'
+
+
+        sql_string =f'SELECT data_extraction_id FROM data_extractions WHERE dataset_id={dataset_id}'
+        data_extraction_ids = self.cursor.execute(sql_string).fetchall()
+      
+        for data_extraction_id in data_extraction_ids:
+            sql_string =f'SELECT * FROM data_points WHERE data_extraction_id={data_extraction_id[0]} {sql_string_add}'
+          
+            data_points_extraction = self.cursor.execute(sql_string).fetchall()
+            data_points = data_points+ data_points_extraction
+
+        df = pd.DataFrame(data_points, columns=['data_point_id', 'data_extraction_id', 'patient_id','data_point_name',
+                                                'data_point_value_num','data_point_value_string','data_point_type', 'roi_standard_name',
+                                                'edit_date', 'edit_user'])
+        
+        df = df.sort_values(['patient_id', 'data_extraction_id'], ascending=False)
+        df = df.drop_duplicates(['patient_id', 'data_point_name'])
+
+        df_small = df[['patient_id','data_point_name',	'data_point_value_num','data_point_value_string']]
+        df_pivot = pd.pivot_table(df_small, values=['data_point_value_num', 'data_point_value_string'], index=['patient_id'],
+                            columns=['data_point_name'], aggfunc=np.max) #Use max as there is only one row and it handles both numbers and strings
+
+        df_pivot = df_pivot.droplevel(0, axis=1)
+        return(df_pivot)
   
 
 
