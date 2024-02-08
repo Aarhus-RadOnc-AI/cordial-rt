@@ -2,7 +2,7 @@ git_ignore_folder/
 test/
 cordialrt/analysis/convert_cpr.py
 database_nation.db
-cordialrt/user_config.txt
+user_config.txt
 test_script.ipynb
 run_dvh.py
 run_slice.py
