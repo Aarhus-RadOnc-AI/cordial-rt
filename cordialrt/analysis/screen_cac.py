@@ -40,18 +40,18 @@ def heart_contour_info(treatment, heart_struct, deep_learning_collection_id, dee
             if len (path_collection_names) == 0:
                 raise StructError(f'No deep learning structure file for {treatment.patient_id}')
             else:
-                for path_collection_name in path_collection_names:          
-                    if path_collection_name[1] == deep_learning_collection_id:
-                        treatment.change_structure_for_treatment(path_collection_name[0][0])
-                        structures = treatment.get_structure()
-                        roi_names = structures.GetStructures()
-                        structure_id = None
-                        for index, roi in roi_names.items():
-                            if (roi['name'].lower() ==deep_learning_structure_name) and not (roi['empty']):
-                                structure_id = roi['id']
-                        if structure_id is None:
-                            raise StructError(f'No deep learning structure for {treatment.patient_id}')
-
+                if path_collection_names[1] == deep_learning_collection_id:
+                    
+                    treatment.change_structure_for_treatment(path_collection_names[0])
+                    structures = treatment.get_structure()
+                    roi_names = structures.GetStructures()
+                    structure_id = None
+                    for index, roi in roi_names.items():
+                        if (roi['name'].lower() == deep_learning_structure_name) and not (roi['empty']):
+                            structure_id = roi['id']
+                    if structure_id is None:
+                        raise StructError(f'No deep learning structure for {treatment.patient_id}')
+        
     elif heart_struct == 'treatment':    
         treatment.add_new_roi('heart')
         structure_id = treatment.roi_by_name('heart').get_priority_synonym()['structure_id']   
@@ -150,7 +150,7 @@ def conutour_and_get_cac_data(patient_id, ct, ct_cropped, cac_in_heart_mask):
 
                 convex = cv2.isContourConvex(contour)
 
-                data['center_min_circle']=center_min_circle
+                data['center_min_circle']= center_min_circle
                 data['radius_min_circle'] = radius_min_circle
                 data['is_convex'] = convex
                 d.append(data)
@@ -158,15 +158,19 @@ def conutour_and_get_cac_data(patient_id, ct, ct_cropped, cac_in_heart_mask):
                 # evalaute pixel values
                 hu_pix_crop = ct_cropped * ct.ds.RescaleSlope + ct.ds.RescaleIntercept
                 pixel_values = list()
+                x_y_pixel_values = list()
                 # Iterate over each point in the contour
                 for point in contour:
                     # Extract x and y coordinates of the point
-                    x, y = point[0]
+                    xp, yp = point[0]
                     
                     # Get the pixel value at this coordinate
-                    pixel_value = hu_pix_crop[y, x]  # Note the reverse order of x and y
+                    pixel_value = hu_pix_crop[yp, xp]  # Note the reverse order of x and y
                     pixel_values.append(pixel_value)
+                    x_y_pixel_values.append([xp,yp,pixel_value])
+
                 data['pixel_values_hu'] =  pixel_values
+                data['x_y_pixel_values_hu'] = x_y_pixel_values
     return(d)
 
 def save_data_to_files(cac_slice_data_center, cac_status_center,center, screen_files_folder_path):
@@ -180,22 +184,16 @@ def save_data_to_files(cac_slice_data_center, cac_status_center,center, screen_f
         df_cac_status = pd.DataFrame(cac_status_center)
         df_cac_status.to_excel(f'{screen_files_folder_path}/cac_status_{center}_{time_stamp}.xlsx')
 
-def main(center:str, screen_files_folder_path:str, heart_struct:str,
-    max_number_of_patients = None, 
-    select_patients = None,
-    deep_learning_collection_id = None, 
-    deep_learning_structure_name = None, ):
+def main(center:str, screen_files_folder_path:str, heart_struct:str,select_patients:list,
+        max_number_of_patients = None, 
+        deep_learning_collection_id = None, 
+        deep_learning_structure_name = None, ):
 
     cac_status_center = list()
     cac_slice_data_center = list()
 
     screened_patient_ids = patients_already_screened(center, screen_files_folder_path)
-    
-    with rtdb.DatabaseCall() as db:
-        patinets_not_screened = db.get_patient_id_from_collection(collection_id = 54,
-                                        department = center, 
-                                        exclude_patients = screened_patient_ids, 
-                                        select_patients = select_patients,)
+    patinets_not_screened = list(set(select_patients)- set(screened_patient_ids))
 
     if max_number_of_patients is not None:
         if max_number_of_patients <= len(patinets_not_screened):
@@ -227,7 +225,7 @@ def main(center:str, screen_files_folder_path:str, heart_struct:str,
                     if cac_in_heart_mask.sum() == 0:
                         continue
                     else:
-                        cac_slice_data = conutour_and_get_cac_data(treatment.patient_id, ct_cropped, ct, cac_in_heart_mask)       
+                        cac_slice_data = conutour_and_get_cac_data(treatment.patient_id, ct, ct_cropped, cac_in_heart_mask)       
                         cac_slice_data_patient = cac_slice_data_patient + cac_slice_data
 
             # Data for patient cac status
@@ -252,3 +250,4 @@ def main(center:str, screen_files_folder_path:str, heart_struct:str,
             pass
     
     save_data_to_files(cac_slice_data_center,cac_status_center,center, screen_files_folder_path)
+

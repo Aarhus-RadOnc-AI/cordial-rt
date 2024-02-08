@@ -3,7 +3,10 @@ test/
 cordialrt/analysis/convert_cpr.py
 database_nation.db
 user_config.txt
+cordialrt/user_config.txt
 test_script.ipynb
 run_dvh.py
 run_slice.py
+run_cac_screen.py
+testcac.xlsx
 *.pyc
