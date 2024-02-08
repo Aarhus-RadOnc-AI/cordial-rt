@@ -123,7 +123,7 @@ def create_cac_mask(ct, ct_cropped):
 
     return(cac_in_heart_mask)
 
-def conutour_and_get_cac_data(patient_id, ct, cac_in_heart_mask):
+def conutour_and_get_cac_data(patient_id, ct, ct_cropped, cac_in_heart_mask):
     d = list()
     contours = list()
     ret, thresh = cv2.threshold(cac_in_heart_mask, 0, 1, cv2.THRESH_BINARY)
@@ -154,7 +154,19 @@ def conutour_and_get_cac_data(patient_id, ct, cac_in_heart_mask):
                 data['radius_min_circle'] = radius_min_circle
                 data['is_convex'] = convex
                 d.append(data)
-            
+
+                # evalaute pixel values
+                hu_pix_crop = ct_cropped * ct.ds.RescaleSlope + ct.ds.RescaleIntercept
+                pixel_values = list()
+                # Iterate over each point in the contour
+                for point in contour:
+                    # Extract x and y coordinates of the point
+                    x, y = point[0]
+                    
+                    # Get the pixel value at this coordinate
+                    pixel_value = hu_pix_crop[y, x]  # Note the reverse order of x and y
+                    pixel_values.append(pixel_value)
+                data['pixel_values_hu'] =  pixel_values
     return(d)
 
 def save_data_to_files(cac_slice_data_center, cac_status_center,center, screen_files_folder_path):
@@ -215,7 +227,7 @@ def main(center:str, screen_files_folder_path:str, heart_struct:str,
                     if cac_in_heart_mask.sum() == 0:
                         continue
                     else:
-                        cac_slice_data = conutour_and_get_cac_data(treatment.patient_id, ct, cac_in_heart_mask)       
+                        cac_slice_data = conutour_and_get_cac_data(treatment.patient_id, ct_cropped, ct, cac_in_heart_mask)       
                         cac_slice_data_patient = cac_slice_data_patient + cac_slice_data
 
             # Data for patient cac status
@@ -224,7 +236,6 @@ def main(center:str, screen_files_folder_path:str, heart_struct:str,
             cac_status_patient['non_zero_cac_slices'] = len(cac_slice_data_patient)
             cac_status_patient['ct_numbers_in_heart'] = ct_numbers_in_heart
             
-
             del(ct)
             gc.collect()
                         
