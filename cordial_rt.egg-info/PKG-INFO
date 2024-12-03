@@ -1,0 +1,8 @@
+Metadata-Version: 2.1
+Name: cordial-rt
+Version: 0.1
+Summary: A collection of functions for organising and analysing radiotherapy DICOM files
+Author: Lasse Refsgaard
+Author-email: LasseRefsgaard@gmail.com
+License-File: LICENSE
+License-File: AUTHORS.rst
