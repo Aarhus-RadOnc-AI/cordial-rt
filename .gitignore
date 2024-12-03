@@ -1,6 +1,5 @@
 git_ignore_folder/
 test/
-cordialrt/analysis/convert_cpr.py
 database_nation.db
 user_config.txt
 cordialrt/user_config.txt
@@ -10,4 +9,4 @@ run_slice.py
 run_cac_screen.py
 testcac.xlsx
 *.pyc
-src/cordialrt/analysis/convert_cpr.py
+
