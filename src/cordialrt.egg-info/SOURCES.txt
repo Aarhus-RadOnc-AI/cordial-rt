@@ -13,6 +13,7 @@ src/cordialrt/analysis/dicom_export.py
 src/cordialrt/analysis/screen_cac.py
 src/cordialrt/analysis/sum_dose.py
 src/cordialrt/analysis/treatment_class.py
+src/cordialrt/analysis/treatment_from_patient.py
 src/cordialrt/analysis/treatments_from_collection.py
 src/cordialrt/analysis/tube_structure_analysis.py
 src/cordialrt/analysis/utils.py
