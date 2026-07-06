@@ -40,7 +40,7 @@ def folder_file_prefix_status(folder_path):
 
 
 def load_dicom_files_in_folder(folder_path):
-    dicom_file_paths = glob.glob(folder_path + "*.dcm")
+    dicom_file_paths = glob.glob(folder_path + "/*.dcm")
     # dicom_files = deque()
     dicom_files = dict()
 
