@@ -119,38 +119,22 @@ def prepare_dose_sum_files_dbcg01(
                 for path in dose_paths:
                     dose_path_scale_pairs.append([path, 1])
             else:
-                # Sum one main dose and one boost dose (We cannot handle plans
-                # with multiple doses when scaling boost/main)
-                if len(dose_paths) != 2:
-                    raise rtex.SumDoseError(
-                        f"Failed for patient: {patient_id} "
-                        f"Number of dose files is not 2, but {len(dose_paths)}"
-                        f"boost reference_dose = {boost_reference_dose} "
-                        f"main reference_dose = {main_reference_dose}"
-                    )
+                from collections import defaultdict
 
+                # Group dose files by referenced plan UID
+                # handles both single dose per plan and per-beam dose exports
+                dose_by_plan = defaultdict(list)
+                for path in dose_paths:
+                    ref_plan = dicomparser.DicomParser(path).GetReferencedRTPlan()
+                    dose_by_plan[ref_plan].append(path)
+
+                # get fractions per plan, sort ascending (boost first)
                 fractions_plan_uid = list()
                 for plan in plans:
-                    no_fractions = list()
-                    for fraction_group in plan.ds.FractionGroupSequence:
-                        no_fractions.append(fraction_group.NumberOfFractionsPlanned)
+                    no_fractions = plan.ds.FractionGroupSequence[0].NumberOfFractionsPlanned
+                    fractions_plan_uid.append([no_fractions, plan.GetSOPInstanceUID()])
 
-                    fractions_plan_uid.append(
-                        [no_fractions[0], plan.GetSOPInstanceUID()]
-                    )
-
-                fractions_dose_paths = list()
-                for dose_path in dose_paths:
-                    ref_plan_uid = dicomparser.DicomParser(
-                        dose_path
-                    ).GetReferencedRTPlan()
-
-                    for plan in fractions_plan_uid:
-                        if plan[1] == ref_plan_uid:
-                            fractions_dose_paths.append([plan[0], dose_path])
-
-                # Lowest number of fractions first
-                fractions_dose_paths.sort(key=lambda tup: tup[0])
+                fractions_plan_uid.sort(key=lambda x: x[0])
 
                 if main_reference_dose == 50:
                     main_fractions = 25
@@ -172,20 +156,25 @@ def prepare_dose_sum_files_dbcg01(
                         f"Failed for patient: {patient_id} boost_reference dose is not standard but {boost_reference_dose}"
                     )
 
-                # if main_dose scale is larger than the max_scale, we cannot be sure that the dose_file with the most fractions is the main dose.
+                # if main_dose scale is larger than the max_scale, we cannot be sure
+                # that the plan with the most fractions is the main dose.
                 max_scale = main_fractions / (boost_fractions + 1)
 
                 if main_dose_scale_factor > max_scale:
                     raise rtex.SumDoseError(
                         f"Failed for patinet: {patient_id}. Unable to identify main plan. Main dose scale factor is {main_dose_scale_factor}"
                     )
-                else:
-                    dose_path_scale_pairs.append(
-                        [fractions_dose_paths[0][1], boost_dose_scale_factor]
-                    )
-                    dose_path_scale_pairs.append(
-                        [fractions_dose_paths[1][1], main_dose_scale_factor]
-                    )
+
+                boost_plan_uid = fractions_plan_uid[0][1]
+                main_plan_uid = fractions_plan_uid[1][1]
+
+                # add all boost beam doses
+                for path in dose_by_plan.get(boost_plan_uid, []):
+                    dose_path_scale_pairs.append([path, boost_dose_scale_factor])
+
+                # add all main beam doses
+                for path in dose_by_plan.get(main_plan_uid, []):
+                    dose_path_scale_pairs.append([path, main_dose_scale_factor])
     return dose_path_scale_pairs, patient_id
 
 
@@ -210,7 +199,10 @@ def save_sum_dose_file(
         Tuple of (local_sum_dose_path, summed_dose_dicom_file)
     """
     # Make a new directory
-    institution_folder = dose_paths[0][len(DICOM_FOLDER) :].split("/")[1]
+    path = dose_paths[0]
+    if path.startswith(DICOM_FOLDER):
+        path = path[len(DICOM_FOLDER):]
+    institution_folder = path.split("/")[0]
     institution_folder_sum = f"{institution_folder}_dose_sum"
     new_folder_path = "/".join([institution_folder_sum, patient_id])
     local_folder_path = "/".join([DICOM_FOLDER, new_folder_path])
@@ -219,7 +211,7 @@ def save_sum_dose_file(
         pass
     else:
         try:
-            os.mkdir(local_folder_path)
+            os.makedirs(local_folder_path, exist_ok=True)
         except OSError:
             print(
                 f"{patient_id} - Creation of the directory {local_folder_path} failed"
@@ -249,7 +241,7 @@ def save_sum_dose_file(
         with rtdb.DatabaseCall() as db:
             db.insert_row_in_table(
                 "dicom_files",
-                ["treatment_id", "file_type", "file_path, file_uid"],
+                ["treatment_id", "file_type", "file_path", "file_uid"],
                 row_data,
             )
 
