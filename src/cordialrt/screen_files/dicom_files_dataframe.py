@@ -45,13 +45,23 @@ def open_dicom_files(parent_folder, max_no_folders = None, folder_paths = False)
         if max_no_folders:
             folders = fast_scandir(parent_folder)[0:max_no_folders]
         else:
-            folders = fast_scandir(parent_folder)        
+            folders = fast_scandir(parent_folder)
+            
+    # Handle both centre/patient/files.dcm and centre/patient/patient/files.dcm
+    deep_folders = []
+    for f in folders:
+        subs = fast_scandir(f)
+        if subs:
+            deep_folders.extend(subs)
+        else:
+            deep_folders.append(f)
+    folders = deep_folders
 
     for path in folders: 
         counter = counter +1
         if counter in list(range(0,2100,100)):
             print(f'{counter}/{len(folders)}')
-        dicom_files = load_dicom_files_in_folder(path+ '\\')
+        dicom_files = load_dicom_files_in_folder(path+ '/')
         study_ids = study_ids_in_dicom_files(dicom_files)
         patient_ids = patient_ids_in_dicom_files(dicom_files)
         data = dict()
