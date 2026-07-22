@@ -62,6 +62,9 @@ SCHEMA = {
             main_reference_dose NUMERIC,
             boost_reference_dose NUMERIC,
             boost_dose_scale_factor NUMERIC,
+            main_fractions INTEGER,
+            boost_fractions INTEGER,
+            is_bilateral INTEGER DEFAULT 0,
             edit_date TEXT NOT NULL,
             edit_user TEXT,
             PRIMARY KEY(treatment_id AUTOINCREMENT)
@@ -123,6 +126,99 @@ SCHEMA = {
             PRIMARY KEY(data_point_id AUTOINCREMENT)
         )""",
 }
+
+def get_reference_dose_from_patient(patient):
+    """Returns total reference dose in Gy. First tries DoseReferenceSequence,
+    falls back to sum of BeamDose * NumberOfFractionsPlanned rounded to nearest 0.5"""
+    for study_uid, study in patient.studies.items():
+        for plan_uid, plan in study.plans.items():
+            ds = plan['data_set']
+            try:
+                return float(ds.DoseReferenceSequence[0].TargetPrescriptionDose)
+            except (AttributeError, IndexError):
+                pass
+            try:
+                fg = ds.FractionGroupSequence[0]
+                fractions = int(fg.NumberOfFractionsPlanned)
+                beam_dose_total = sum(
+                    float(beam.BeamDose)
+                    for beam in fg.ReferencedBeamSequence
+                    if hasattr(beam, 'BeamDose')
+                )
+                if beam_dose_total == 0:
+                    continue
+                return round(fractions * beam_dose_total * 2) / 2
+            except (AttributeError, IndexError):
+                continue
+    return None
+
+def get_treatment_info_from_patient(patient):
+    """Returns dict with main and boost dose/fractions.
+    Main = earliest plan by StudyDate.
+    Boost = same structure set as main + fewer fractions.
+    Plans referencing a different structure set are ignored (replan/re-irradiation).
+    Uses sum of all beams to handle multi-beam TPS exports correctly.
+    """
+    for study_uid, study in patient.studies.items():
+        if len(study.doses) == 0:
+            continue
+
+        plan_list = []
+        for plan_uid, plan in study.plans.items():
+            ds = plan['data_set']
+            try:
+                fg = ds.FractionGroupSequence[0]
+                fractions = int(fg.NumberOfFractionsPlanned)
+                beam_dose_total = sum(
+                    float(beam.BeamDose)
+                    for beam in fg.ReferencedBeamSequence
+                    if hasattr(beam, 'BeamDose')
+                )
+                dose = round(fractions * beam_dose_total * 2) / 2 if beam_dose_total > 0 else None
+                structure_uids = {
+                    ref.ReferencedSOPInstanceUID
+                    for ref in ds.ReferencedStructureSetSequence
+                    if ref.ReferencedSOPClassUID.name == 'RT Structure Set Storage'
+                }
+                study_date = getattr(ds, 'StudyDate', None) or getattr(ds, 'RTPlanDate', '99999999')
+                plan_list.append({
+                    'uid': plan_uid,
+                    'fractions': fractions,
+                    'dose': dose,
+                    'structure_uids': structure_uids,
+                    'study_date': study_date,
+                })
+            except (AttributeError, IndexError):
+                continue
+
+        if not plan_list:
+            continue
+
+        # Main plan = earliest by StudyDate
+        plan_list.sort(key=lambda p: p['study_date'])
+        main_plan = plan_list[0]
+
+        # Boost = same structure set as main, fewer fractions
+        boost_plans = [
+            p for p in plan_list[1:]
+            if p['structure_uids'] == main_plan['structure_uids']
+            and p['fractions'] < main_plan['fractions']
+        ]
+
+        main_dose = main_plan['dose']
+        main_fractions = main_plan['fractions']
+        boost_dose = sum(p['dose'] for p in boost_plans if p['dose']) or None
+        boost_fractions = sum(p['fractions'] for p in boost_plans) or None
+
+        return {
+            'main_reference_dose': main_dose,
+            'main_fractions': main_fractions,
+            'boost_reference_dose': boost_dose,
+            'boost_fractions': boost_fractions,
+        }
+
+    return None
+
 class DatabaseCall:
     def _init_db(self):
         existing = {
@@ -253,7 +349,10 @@ class DatabaseCall:
         boost_reference_dose=0,
         main_dose_scale_factor=1,
         boost_dose_scale_factor=1,
+        main_fractions=None,
+        boost_fractions=None,
         study_uid=None,
+        force_structure_uid=None,
     ):
         """Create a new treatment in a collection by adding all data from the patient related to the plan names specified.
         Use the study_uid if the patient obejct contains multiple studies. Returns sucess: True/False, error_log
@@ -268,6 +367,8 @@ class DatabaseCall:
                 "boost_dose_scale_factor",
                 "main_reference_dose",
                 "boost_reference_dose",
+                "main_fractions",
+                "boost_fractions",
             ],
             [
                 collection_id,
@@ -277,6 +378,8 @@ class DatabaseCall:
                 boost_dose_scale_factor,
                 main_reference_dose,
                 boost_reference_dose,
+                main_fractions,
+                boost_fractions,
             ],
         )
         sql_string = "SELECT MAX(treatment_id) FROM treatments"
