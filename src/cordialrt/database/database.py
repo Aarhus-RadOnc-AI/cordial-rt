@@ -219,6 +219,12 @@ def get_treatment_info_from_patient(patient):
 
     return None
 
+def log_multi_plan_patient(patient_id, plan_uids, dose_uids,
+                           log_path='multi_plan_patients.txt'):
+    with open(log_path, 'a') as f:
+        f.write(f"{datetime.datetime.now()} | Patient: {patient_id} | "
+                f"Plans: {list(plan_uids)} | Doses: {list(dose_uids)}\n")
+
 class DatabaseCall:
     def _init_db(self):
         existing = {
@@ -245,6 +251,7 @@ class DatabaseCall:
         self.cursor = self.connection.cursor()
         self._init_db()
         return self
+        
     def __exit__(self, exception_type, exception_val, trace):
         # once the with block is over, the __exit__ method would be called
         # with that, you close the connnection
@@ -254,6 +261,7 @@ class DatabaseCall:
         except AttributeError:  # isn't closable
             print("Not closable.")
             return True  # exception handled successfully
+            
     # General dataabse functionality
     def insert_row_in_table(self, table_name, column_names, row_data):
         """Insert rows into the database and set edit_date and edit_user"""
@@ -268,6 +276,7 @@ class DatabaseCall:
             self.connection.commit()
         except (sqlite3.IntegrityError, sqlite3.InterfaceError) as e:
             raise crtex.SqlInsertFail(e)
+            
     # Treatment collection
     def create_treatment_collection(self, collection_name):
         """Creates new treatment collectio. Returns collection_id"""
@@ -277,6 +286,7 @@ class DatabaseCall:
         sql_string = "SELECT MAX(collection_id) FROM treatment_collections"
         collection_id = self.cursor.execute(sql_string).fetchone()[0]
         return collection_id
+        
     def get_treatments_from_collection(
         self,
         collection_id,
@@ -300,6 +310,7 @@ class DatabaseCall:
             sql_string = f"{sql_string} AND patient_id IN ({string_ids})"
         treatments = self.cursor.execute(sql_string, variables).fetchall()
         return treatments
+        
     def get_patient_id_from_collection(
         self,
         collection_id,
@@ -320,6 +331,7 @@ class DatabaseCall:
         for id in patient_ids:
             patient_id_lst.append(id[0])
         return patient_id_lst
+        
     # Treatments
     def delete_treatment_from_collection(self, patient_ids, collection_id):
         """Delete treatments and associated files from a treatment collection"""
@@ -339,6 +351,7 @@ class DatabaseCall:
         print(sql_delete_treat)
         self.cursor.execute(sql_delete_treat)
         self.connection.commit()
+        
     def add_new_treatment_to_collection_from_plan_names(
         self,
         patient,
@@ -388,12 +401,14 @@ class DatabaseCall:
             patient, treatment_id, plan_names, study_uid
         )
         return (status, error_log)
+        
     # Files
     def get_file_paths_from_treatment(self, treatment_id):
         """Returns DICOM file information for a treatment"""
         sql_string = "SELECT * FROM dicom_files WHERE treatment_id = ?"
         file_rows = self.cursor.execute(sql_string, [treatment_id]).fetchall()
         return file_rows
+        
     def add_files_to_treatment(self, treatment_id, files, file_type):
         for uid, file in files.items():
             global_path = file["path"][len(DICOM_FOLDER_PATH) :]
@@ -403,6 +418,7 @@ class DatabaseCall:
                 ["treatment_id", "file_path", "file_type", "file_uid"],
                 [treatment_id, global_path, file_type, uid],
             )
+            
     def add_files_to_treatment_from_plan_names(
         self, patient, treatment_id, plan_names, study_uid=None
     ):
@@ -410,48 +426,48 @@ class DatabaseCall:
         error_log = list()
         plan_infos = dict()
         if study_uid is None:
+            plans = None
+            main_study = None
             for uid, study in patient.studies.items():
-                if len(study.plans) > 0:
+                if len(study.plans) > 0 and len(study.doses) > 0:
                     plans = study.plans
                     main_study = study
-                else:
-                    error_log.append(f"{patient.id} No plans to add")
+                    break
+            if plans is None:
+                error_log.append(f"{patient.id} No study with both plans and doses found")
+                return (False, error_log)
         else:
             main_study = patient.studies[study_uid]
             plans = main_study.plans
-        for uid, plan in plans.items():
-            plan_structure_uids = set()
-            for structure_reference in plan["data_set"].ReferencedStructureSetSequence:
-                if (
-                    structure_reference.ReferencedSOPClassUID.name
-                    == "RT Structure Set Storage"
-                ):
-                    plan_structure_uids.add(
-                        structure_reference.ReferencedSOPInstanceUID
-                    )
-            plan_infos[plan["data_set"].RTPlanLabel] = {
-                "uid": uid,
-                "structure_uid": plan_structure_uids,
-                "path": plan["path"],
-            }
+            
         structure_uids = set()
         plan_uids = set()
         plans_out = dict()
         structures_out = dict()
         doses_out = dict()
         cts_out = dict()
+        
         for plan_name in plan_names:
-            structure_uids = structure_uids.union(
-                plan_infos[plan_name]["structure_uid"]
-            )
-            plan_uids.add(plan_infos[plan_name]["uid"])
-            plans_out[plan_infos[plan_name]["uid"]] = main_study.plans[
-                plan_infos[plan_name]["uid"]
-            ]
+            matched = [(uid, p) for uid, p in plans.items()
+                       if p['data_set'].RTPlanLabel == plan_name]
+            for uid, p in matched:
+                plan_structure_uids = {
+                    ref.ReferencedSOPInstanceUID
+                    for ref in p['data_set'].ReferencedStructureSetSequence
+                    if ref.ReferencedSOPClassUID.name == 'RT Structure Set Storage'
+                }
+                structure_uids = structure_uids.union(plan_structure_uids)
+                plan_uids.add(uid)
+                plans_out[uid] = p
+        
+        if len(plan_uids) > len(plan_names):
+            log_multi_plan_patient(patient.id, plan_uids,
+                                   {uid for uid in main_study.doses.keys()})
         # Check if all plans have same structure
         if len(structure_uids) == 0:
             error_log.append(f"No structure for {patient.id} , plan {plan_names}")
             return (False, error_log)
+            
         elif len(structure_uids) > 1:
             error_log.append(
                 f"More than one structure for {patient.id} , plan {plan_names}"
@@ -504,6 +520,7 @@ class DatabaseCall:
         self.add_files_to_treatment(treatment_id, doses_out, "dose")
         self.add_files_to_treatment(treatment_id, cts_out, "ct")
         return (True, error_log)
+        
     def delete_sum_dose_files(self, patient_ids, collection_id):
         """Delete sum dose files and references in db"""
         string_ids = ", ".join(f'"{id}"' for id in patient_ids)
@@ -517,6 +534,7 @@ class DatabaseCall:
         self.cursor.execute(sql_delete_files)
         print(sql_delete_files)
         self.connection.commit()
+        
     # Synonyms
     def create_synonym_collection(self, synonym_collection_name):
         """Creates new synonym collection. Returns synonym_collection_id"""
@@ -528,6 +546,7 @@ class DatabaseCall:
         sql_string = "SELECT MAX(synonym_collection_id) FROM synonym_collections"
         collection_id = self.cursor.execute(sql_string).fetchone()[0]
         return collection_id
+        
     def associate_synonym_collection_with_treatment_colection(
         self, synonym_collection_id, treatment_collection_id
     ):
@@ -536,6 +555,7 @@ class DatabaseCall:
             ["synonym_collection_id", "treatment_collection_id"],
             [synonym_collection_id, treatment_collection_id],
         )
+        
     def add_synoym_to_synonym_colection(
         self,
         synonym_collection_id,
@@ -564,6 +584,7 @@ class DatabaseCall:
         for row in rows:
             synonym_collection_ids.append(row[0])
         return synonym_collection_ids
+        
     def get_synonyms_from_standard_name(
         self, standard_name, treatment_collection_id, priority=None
     ):
@@ -589,10 +610,12 @@ class DatabaseCall:
                 for synonym in synonyms:
                     rows.append(synonym)
         return list(set(rows))
+        
     def get_all_synonym_data_from_synonym_collection(self, synonym_collection_id):
         sql_string = "SELECT * FROM synonyms WHERE synonym_collection_id = ?"
         synonyms = self.cursor.execute(sql_string, [synonym_collection_id]).fetchall()
         return synonyms
+        
     def update_db_with_priority_count(
         self, rois_counted, roi_names, synonym_collection_id
     ):
@@ -628,6 +651,7 @@ class DatabaseCall:
         print(
             f"Updated prioritisation in synonyms fo synonym_collection {synonym_collection_id}"
         )
+        
     # Structure collection
     def create_structure_collection(self, collection_name):
         self.insert_row_in_table(
@@ -636,6 +660,7 @@ class DatabaseCall:
         sql_string = "SELECT MAX(structure_collection_id) FROM structure_collections"
         collection_id = self.cursor.execute(sql_string).fetchone()[0]
         return collection_id
+        
     def new_structure_collection_from_folder(self, collection_name, folder_path):
         """Create a new structure collection by adding all structure files in a folder orgnaised with > center names > patient_ids"""
         collection_id = self.create_structure_collection(collection_name)
