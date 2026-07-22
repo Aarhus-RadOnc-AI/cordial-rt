@@ -32,7 +32,8 @@ def init_treatments_from_collection(treatment_collection_id, treatment_limit = N
         treatment.treatment_place = treatment_row[3]
         treatment.main_dose_scale_factor = treatment_row[4]
         treatment.main_reference_dose = treatment_row[5]
-        treatment.boost_reference_dose = treatment_row[6]
+        is_bilateral = treatment_row[12] if len(treatment_row) > 12 else 0
+        treatment.boost_reference_dose = 0 if is_bilateral else (treatment_row[6] if treatment_row[6] is not None else 0)
         treatment.boost_dose_scale_factor = treatment_row[7]
       
         treatment.load_file_paths()
